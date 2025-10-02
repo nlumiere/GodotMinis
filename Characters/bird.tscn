@@ -1,0 +1,46 @@
+[gd_scene load_steps=8 format=3 uid="uid://cjp3mogud3igd"]
+
+[ext_resource type="Script" path="res://Scripts/Bird.cs" id="1_a7oxm"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_wf8m3"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_visual"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_bird"]
+albedo_color = Color(1, 0.8, 0.2, 1)
+metallic = 0.1
+roughness = 0.5
+
+[sub_resource type="PrismMesh" id="PrismMesh_brs2v"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_me1re"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_tor1x"]
+material = SubResource("StandardMaterial3D_me1re")
+
+[node name="Bird" type="CharacterBody3D"]
+script = ExtResource("1_a7oxm")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("CapsuleShape3D_wf8m3")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+mesh = SubResource("CapsuleMesh_visual")
+surface_material_override/0 = SubResource("StandardMaterial3D_bird")
+
+[node name="WingR" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(-6.55671e-09, 0.75, -3.27835e-08, 0, -3.27835e-08, -0.75, -0.15, -3.27835e-08, 1.43301e-15, 0.831874, 0, 0)
+mesh = SubResource("PrismMesh_brs2v")
+
+[node name="WingL" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(-6.55671e-09, -0.75, 3.27835e-08, 0, -3.27835e-08, -0.75, 0.15, -3.27835e-08, 1.43301e-15, -0.848988, 0, 0)
+mesh = SubResource("PrismMesh_brs2v")
+
+[node name="TailPivot" type="Node3D" parent="Body"]
+
+[node name="Tail" type="MeshInstance3D" parent="Body/TailPivot"]
+transform = Transform3D(0.4, 0, 0, 0, 0.4, 0, 0, 0, 0.4, 0, -1.16028, 0)
+mesh = SubResource("CapsuleMesh_tor1x")
+skeleton = NodePath("../..")
+
+[node name="Camera3D" type="Camera3D" parent="."]
