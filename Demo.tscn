@@ -30,7 +30,7 @@ camera_attributes = SubResource("CameraAttributesPractical_1mnbr")
 compositor = SubResource("Compositor_qtk62")
 
 [node name="Ground" type="MeshInstance3D" parent="."]
-transform = Transform3D(1600, 0, 0, 0, 1600, 0, 0, 0, 1600, 0, -880, 0)
+transform = Transform3D(800, 0, 0, 0, 800, 0, 0, 0, 800, 0, -440, 0)
 mesh = ExtResource("2_7ts4u")
 surface_material_override/0 = SubResource("StandardMaterial3D_mgj76")
 

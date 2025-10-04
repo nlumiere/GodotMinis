@@ -44,3 +44,21 @@ mesh = SubResource("CapsuleMesh_tor1x")
 skeleton = NodePath("../..")
 
 [node name="Camera3D" type="Camera3D" parent="."]
+
+[node name="RichTextLabel" type="RichTextLabel" parent="."]
+offset_right = 199.0
+offset_bottom = 40.0
+text = "No GamePad Connected"
+
+[node name="RichTextLabel2" type="RichTextLabel" parent="."]
+offset_left = -1.0
+offset_top = 26.0
+offset_right = 198.0
+offset_bottom = 66.0
+text = "Height: "
+
+[node name="RichTextLabel3" type="RichTextLabel" parent="."]
+offset_top = 54.0
+offset_right = 199.0
+offset_bottom = 94.0
+text = "Velocity: "
