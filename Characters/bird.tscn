@@ -62,3 +62,9 @@ offset_top = 54.0
 offset_right = 199.0
 offset_bottom = 94.0
 text = "Velocity: "
+
+[node name="RichTextLabel4" type="RichTextLabel" parent="."]
+offset_left = 849.0
+offset_top = 1.0
+offset_right = 1150.0
+offset_bottom = 173.0

@@ -49,13 +49,13 @@ public partial class Bird : CharacterBody3D
 	public override void _Ready()
 	{
 		_isUsingGamepad = Input.GetConnectedJoypads().Count > 0;
+		Input.JoyConnectionChanged += UpdateOnControllerChanged;
+		UpdateControllerInfo();
+
 		FloorMaxAngle = Mathf.DegToRad(90.0f);
 		FloorSnapLength = 0.1f;
 
 		_camera = GetNode<Camera3D>("Camera3D");
-		RichTextLabel gamepadConnected = GetNode<RichTextLabel>("RichTextLabel");
-		gamepadConnected.Text = _isUsingGamepad ? "Gamepad connected" : "No gamepad detected";
-		gamepadConnected.Modulate = _isUsingGamepad ? Colors.Green : Colors.Red;
 
 		_heightLabel = GetNode<RichTextLabel>("RichTextLabel2");
 		_speedLabel = GetNode<RichTextLabel>("RichTextLabel3");
@@ -575,22 +575,42 @@ public partial class Bird : CharacterBody3D
 		PhysicsDirectSpaceState3D spaceState = GetWorld3D().DirectSpaceState;
 		Vector3 from = GlobalPosition;
 		Vector3 to = from + Vector3.Down * 1000.0f; // Cast ray 1000 units down
-		
+
 		PhysicsRayQueryParameters3D query = PhysicsRayQueryParameters3D.Create(from, to);
 		query.CollideWithAreas = false;
 		query.CollideWithBodies = true;
 		query.CollisionMask = 0xFFFFFFFF; // Check all collision layers
-		
+
 		Godot.Collections.Dictionary result = spaceState.IntersectRay(query);
-		
+
 		if (result.Count > 0)
 		{
 			Vector3 hitPosition = (Vector3)result["position"];
 			_knownHeight = true;
 			return GlobalPosition.Y - hitPosition.Y;
 		}
-		
+
 		_knownHeight = false;
 		return GlobalPosition.Y;
+	}
+
+	private void UpdateOnControllerChanged(long device, bool connected)
+	{
+		UpdateControllerInfo();
+	}
+
+	private void UpdateControllerInfo()
+	{
+		// Update the gamepad status based on current connected joypads
+		_isUsingGamepad = Input.GetConnectedJoypads().Count > 0;
+		
+		RichTextLabel gamepadConnected = GetNode<RichTextLabel>("RichTextLabel");
+		gamepadConnected.Text = _isUsingGamepad ? "Gamepad connected" : "No gamepad detected";
+		gamepadConnected.Modulate = _isUsingGamepad ? Colors.Green : Colors.Red;
+		
+		RichTextLabel controlsInfo = GetNode<RichTextLabel>("RichTextLabel4");
+		controlsInfo.Text = _isUsingGamepad ?
+			"Left Stick: Pitch/Roll\nRight Stick: Pan Camera\nA: Flap\nX: Tuck Wings\nRight Stick Click: Reset Camera" :
+			"WASD: Pitch/Roll\nLeft/Right: Pan Camera\nSpace: Flap\nEnter: Tuck Wings\nUp: Reset Camera";
 	}
 }
