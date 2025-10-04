@@ -3,14 +3,11 @@ using Godot;
 public partial class Bird : CharacterBody3D
 {
 	private readonly float DEADZONE = 0.2f;
-	private const float FlapForce = 600.0f;
-	private const float ForwardThrust = 1200.0f;
-	private const float TurnSpeed = 120.0f;
-	private const float Gravity = 15.0f;
+	private const float ForwardThrust = 1000.0f;
+	private const float Gravity = 60.0f;
 	private const float DragCoefficient = 0.02f;
 	private const float FlapDuration = 0.3f;
 	private float _flapLockout = 0.0f;
-	private float _previousYRotation = 0.0f;
 	private Camera3D _camera;
 	private Node3D _body;
 	private Node3D _tail;
@@ -26,10 +23,21 @@ public partial class Bird : CharacterBody3D
 	private Vector3 _wingRBasePosition;
 	
 	private Vector3 _angularVelocity = Vector3.Zero;
-	private const float AngularDamping = 3.0f;
+	private const float AngularDamping = 0.5f;
 	private const float MaxBankAngle = 45.0f;
 	private float _currentBankAngle = 0.0f;
 	private const float BankingSpeed = 90.0f;
+	private const float ControlTorque = 15.0f;
+	private const float AngularMass = 1.5f;
+	
+	private bool _wingsTucked = false;
+	private const float UprightSpeed = 3.0f;
+	private float _cameraPanAngle = 0.0f;
+	private const float CameraPanSpeed = 90.0f;
+	private const float CameraDistance = 10.0f;
+	private const float CameraHeight = 4.0f;
+	private float _previousCameraPanAngle = 0.0f;
+	private float _baseUnlockedAngle = 180.0f;
 
 	public override void _Ready()
 	{
@@ -37,6 +45,21 @@ public partial class Bird : CharacterBody3D
 		FloorSnapLength = 0.1f;
 
 		_camera = GetNode<Camera3D>("Camera3D");
+		
+		if (_camera != null)
+		{
+			Vector3 birdPosition = GlobalPosition;
+			float defaultAngle = 180.0f;
+			Vector3 offsetDirection = new Vector3(
+				Mathf.Sin(Mathf.DegToRad(defaultAngle)), 
+				0, 
+				Mathf.Cos(Mathf.DegToRad(defaultAngle))
+			);
+			Vector3 targetCameraPos = birdPosition + offsetDirection * CameraDistance;
+			targetCameraPos.Y = birdPosition.Y + CameraHeight;
+			_camera.GlobalPosition = targetCameraPos;
+			_camera.LookAt(birdPosition, Vector3.Up);
+		}
 		_body = GetNode<Node3D>("Body");
 		_tail = _body.GetNode<Node3D>("TailPivot");
 		_wingL = _body.GetNode<Node3D>("WingL");
@@ -65,6 +88,7 @@ public partial class Bird : CharacterBody3D
 		HandleInput(delta);
 		UpdateMovement(delta);
 		UpdateWingAnimation((float)delta);
+		UpdateWingVisibility();
 		MoveAndSlide();
 		UpdateCamera();
 	}
@@ -84,22 +108,63 @@ public partial class Bird : CharacterBody3D
 			float maxTailDeflection = 30.0f;
 			float targetTailYaw = turnInput * maxTailDeflection;
 			float targetTailPitch = pitchInput * maxTailDeflection;
-			
-			// X rotation = pitch, Z rotation = yaw for capsule oriented along Z-axis
 			_tail.Rotation = new Vector3(Mathf.DegToRad(targetTailPitch), 0, Mathf.DegToRad(targetTailYaw));
 		}
 		
 		ApplyVisualBanking(turnInput, (float)delta);
 
-		// Thrust applied 90 degrees upward from bird's current orientation
+		float cameraPanInput = Input.GetJoyAxis(0, JoyAxis.RightX);
+		if (Mathf.Abs(cameraPanInput) < DEADZONE) cameraPanInput = 0;
+		_cameraPanAngle += cameraPanInput * CameraPanSpeed * (float)delta;
+		
+		if (Input.IsActionJustPressed("right_stick_pressed"))
+		{
+			_cameraPanAngle = 0.0f;
+			
+			if (_camera != null)
+			{
+				Vector3 birdPosition = GlobalPosition;
+				Transform3D pitchedTransform = Transform;
+				pitchedTransform = pitchedTransform.Rotated(Transform.Basis.X, Mathf.DegToRad(90.0f));
+				Vector3 birdForward = -pitchedTransform.Basis.Z;
+				Vector3 horizontalForward = new Vector3(birdForward.X, 0, birdForward.Z);
+				
+				Vector3 offsetDirection;
+				if (horizontalForward.LengthSquared() < 0.01f)
+				{
+					offsetDirection = new Vector3(0, 0, 1);
+				}
+				else
+				{
+					offsetDirection = -horizontalForward.Normalized();
+				}
+				
+				Vector3 targetCameraPos = birdPosition + offsetDirection * CameraDistance;
+				targetCameraPos.Y = birdPosition.Y + CameraHeight;
+				_camera.GlobalPosition = targetCameraPos;
+				_camera.LookAt(birdPosition, Vector3.Up);
+			}
+		}
+
+		_wingsTucked = Input.IsActionPressed("ui_select");
+
 		if (Input.IsActionPressed("ui_accept") && _flapLockout <= 0)
 		{
-			GD.Print("Thrust!");
+			_wingsTucked = false;
+			
 			Transform3D pitchedTransform = Transform;
 			pitchedTransform = pitchedTransform.Rotated(Transform.Basis.X, Mathf.DegToRad(90.0f));
+			
 			Vector3 pitchedForward = -pitchedTransform.Basis.Z;
 			pitchedForward = pitchedForward.Normalized();
-			velocity += pitchedForward * ForwardThrust * (float)delta;
+			Vector3 forwardForce = pitchedForward * ForwardThrust * (float)delta;
+			velocity += forwardForce;
+			
+			Vector3 pitchedUp = -pitchedTransform.Basis.Z;
+			const float FlapLift = 400.0f;
+			Vector3 liftForce = pitchedUp * FlapLift * (float)delta;
+			velocity += liftForce;
+			
 			_flapLockout = FlapDuration;
 			StartWingFlap();
 		}
@@ -113,26 +178,64 @@ public partial class Bird : CharacterBody3D
 
 		if (!IsOnFloor())
 		{
-			float effectiveGravity = Gravity;
-			
 			Vector3 birdForward = -Transform.Basis.Z;
-			float forwardSpeed = velocity.Dot(birdForward);
+			Vector3 birdUp = Transform.Basis.Y;
+			float airspeed = velocity.Length();
+			const float MinLiftSpeed = 3.0f;
 			
-			// Simple lift model: reduce gravity based on forward speed
-			if (forwardSpeed > 1.0f)
+			if (airspeed > MinLiftSpeed && !_wingsTucked)
 			{
-				float liftFactor = Mathf.Min(0.95f, (forwardSpeed * forwardSpeed) * 0.1f);
-				effectiveGravity = Gravity * (1.0f - liftFactor);
+				Vector3 velocityDirection = velocity.Normalized();
+				float angleOfAttack = Mathf.Asin(velocityDirection.Dot(birdUp));
+				float speedFactor = (airspeed - MinLiftSpeed) / 12.0f;
+				float lowSpeedFalloff = Mathf.SmoothStep(0.0f, 1.0f, (airspeed - MinLiftSpeed) / 5.0f);
+				speedFactor *= lowSpeedFalloff;
+				float liftCoefficient = 0.9f;
+				float liftMagnitude = liftCoefficient * speedFactor * airspeed * Mathf.Sin(angleOfAttack);
+				liftMagnitude = Mathf.Clamp(liftMagnitude, -Gravity * 0.7f, Gravity * 1.0f);
+				
+				Vector3 liftDirection = birdUp - velocityDirection * velocityDirection.Dot(birdUp);
+				if (liftDirection.Length() > 0.01f)
+				{
+					liftDirection = liftDirection.Normalized();
+					Vector3 liftForce = liftDirection * liftMagnitude * (float)delta;
+					velocity += liftForce;
+				}
 			}
 			
-			velocity.Y -= effectiveGravity * (float)delta;
+			velocity.Y -= Gravity * (float)delta;
 		}
-		else if (velocity.Y < 0)
+		else
 		{
-			velocity.Y = 0;
+			if (velocity.Y < 0)
+			{
+				velocity.Y = 0;
+			}
+			
+			Vector3 horizontalVelocity = new Vector3(velocity.X, 0, velocity.Z);
+			float horizontalSpeed = horizontalVelocity.Length();
+			
+			if (horizontalSpeed > 0.1f)
+			{
+				const float ImpactFriction = 35.0f;
+				float frictionReduction = ImpactFriction * (float)delta;
+				float newHorizontalSpeed = Mathf.Max(0.0f, horizontalSpeed - frictionReduction);
+				float speedRatio = newHorizontalSpeed / horizontalSpeed;
+				velocity.X *= speedRatio;
+				velocity.Z *= speedRatio;
+			}
+			else
+			{
+				velocity.X = 0;
+				velocity.Z = 0;
+				_angularVelocity.Y = 0;
+			}
+			
+			_angularVelocity.Y *= (1.0f - 12.0f * (float)delta);
 		}
 
 		ApplyRudderPhysics((float)delta);
+		ApplyGroundStabilization((float)delta);
 		ApplyQuadraticDrag(ref velocity, (float)delta);
 
 		Velocity = velocity;
@@ -142,6 +245,19 @@ public partial class Bird : CharacterBody3D
 	{
 		_isFlapping = true;
 		_flapAnimationTime = 0.0f;
+	}
+
+	private void UpdateWingVisibility()
+	{
+		if (_wingL != null)
+		{
+			_wingL.Visible = !_wingsTucked;
+		}
+		
+		if (_wingR != null)
+		{
+			_wingR.Visible = !_wingsTucked;
+		}
 	}
 
 	private void UpdateWingAnimation(float delta)
@@ -166,7 +282,6 @@ public partial class Bird : CharacterBody3D
 			return;
 		}
 		
-		// Three-phase realistic bird flap pattern
 		float flapProgress = _flapAnimationTime / FlapDuration;
 		float flapIntensity;
 		
@@ -205,57 +320,83 @@ public partial class Bird : CharacterBody3D
 		}
 	}
 
-	/// <summary>
-	/// Applies rotation based on tail deflection, using speed-dependent control authority
-	/// to avoid gimbal lock issues while maintaining realistic flight physics
-	/// </summary>
+	private void ApplyGroundStabilization(float delta)
+	{
+		if (!IsOnFloor()) return;
+		
+		Vector3 currentEuler = Transform.Basis.GetEuler();
+		float currentRoll = currentEuler.Z;
+		float currentPitch = currentEuler.X;
+		
+		bool isActiveTurning = false;
+		if (_tail != null)
+		{
+			float tailYaw = _tail.Rotation.Z;
+			float tailPitch = _tail.Rotation.X;
+			isActiveTurning = Mathf.Abs(tailYaw) > 0.05f || Mathf.Abs(tailPitch) > 0.05f;
+		}
+		
+		if (!isActiveTurning)
+		{
+			float targetRoll = 0.0f;
+			float targetPitch = 0.0f;
+			float newRoll = Mathf.LerpAngle(currentRoll, targetRoll, UprightSpeed * delta);
+			float newPitch = Mathf.LerpAngle(currentPitch, targetPitch, UprightSpeed * delta);
+			Vector3 newEuler = new Vector3(newPitch, currentEuler.Y, newRoll);
+			Transform = new Transform3D(Basis.FromEuler(newEuler), GlobalPosition);
+		}
+	}
+
 	private void ApplyRudderPhysics(float delta)
 	{
 		if (_tail == null) return;
 		
-		float tailYaw = Mathf.RadToDeg(_tail.Rotation.Z);
-		float tailPitch = Mathf.RadToDeg(_tail.Rotation.X);
-		float currentSpeed = Velocity.Length();
+		float tailYaw = _tail.Rotation.Z;
+		float tailPitch = _tail.Rotation.X;
+		float airspeed = Velocity.Length();
 		
-		// Different minimum control authority for yaw vs pitch when stationary
-		float yawSpeedFactor, pitchSpeedFactor;
-		if (currentSpeed < 1.0f)
-		{
-			yawSpeedFactor = 0.1f;
-			pitchSpeedFactor = 0.6f;
-		}
-		else
-		{
-			float baseFactor = (currentSpeed * currentSpeed * currentSpeed) / (20.0f * 20.0f * 20.0f);
-			yawSpeedFactor = Mathf.Max(0.2f, Mathf.Min(1.0f, baseFactor));
-			pitchSpeedFactor = Mathf.Max(0.6f, Mathf.Min(1.0f, baseFactor));
-		}
+		float speedEffectiveness = Mathf.Min(1.0f, airspeed / 8.0f);
+		speedEffectiveness = Mathf.Max(0.1f, speedEffectiveness);
 		
-		float rudderAuthority = 2.0f;
-		float yawRate = tailYaw * rudderAuthority * yawSpeedFactor * delta;
-		float pitchRate = tailPitch * rudderAuthority * pitchSpeedFactor * delta * 4;
-		
-		// Use basis rotation to avoid gimbal lock, keeping bird's position fixed
 		Vector3 currentPosition = GlobalPosition;
 		Basis currentBasis = Transform.Basis;
 		
-		if (Mathf.Abs(yawRate) > 0.001f)
+		// PITCH: Direct control with non-linear response curve
+		if (Mathf.Abs(tailPitch) > 0.001f)
 		{
-			currentBasis = currentBasis.Rotated(Vector3.Up, Mathf.DegToRad(yawRate));
+			float normalizedPitch = tailPitch / Mathf.DegToRad(30.0f);
+			float pitchCurve = normalizedPitch * normalizedPitch * Mathf.Sign(normalizedPitch);
+			float enhancedPitch = pitchCurve * Mathf.DegToRad(30.0f);
+			
+			float pitchRate = enhancedPitch * 8.0f * speedEffectiveness * delta;
+			Vector3 pitchAxis = Transform.Basis.X;
+			currentBasis = currentBasis.Rotated(pitchAxis, pitchRate);
 		}
 		
-		if (Mathf.Abs(pitchRate) > 0.001f)
+		Vector3 yawTorque = Vector3.Zero;
+		yawTorque.Y = tailYaw * (ControlTorque * 0.4f) * speedEffectiveness;
+		
+		Vector3 yawAngularAcceleration = yawTorque / AngularMass;
+		_angularVelocity.Y += yawAngularAcceleration.Y * delta;
+		_angularVelocity.Y *= (1.0f - AngularDamping * delta);
+		
+		if (Mathf.Abs(tailYaw) < 0.05f)
 		{
-			Vector3 birdRightAxis = Transform.Basis.X;
-			currentBasis = currentBasis.Rotated(birdRightAxis, Mathf.DegToRad(pitchRate));
+			float stabilizingForce = 3.0f;
+			_angularVelocity.Y *= (1.0f - stabilizingForce * delta);
+		}
+		
+		float maxYawRate = Mathf.Lerp(0.9f, 1.2f, Mathf.Min(1.0f, airspeed / 20.0f));
+		_angularVelocity.Y = Mathf.Clamp(_angularVelocity.Y, -maxYawRate, maxYawRate);
+		
+		if (Mathf.Abs(_angularVelocity.Y) > 0.001f)
+		{
+			currentBasis = currentBasis.Rotated(Vector3.Up, _angularVelocity.Y * delta);
 		}
 		
 		Transform = new Transform3D(currentBasis, currentPosition);
 	}
 
-	/// <summary>
-	/// Applies visual banking to the bird's body during turns without affecting physics
-	/// </summary>
 	private void ApplyVisualBanking(float turnInput, float delta)
 	{
 		float targetBankAngle = turnInput * MaxBankAngle;
@@ -270,54 +411,105 @@ public partial class Bird : CharacterBody3D
 		}
 	}
 
-	/// <summary>
-	/// Applies quadratic air drag that increases with velocity squared
-	/// </summary>
 	private void ApplyQuadraticDrag(ref Vector3 velocity, float delta)
 	{
 		float speed = velocity.Length();
 		if (speed > 0.01f)
 		{
-			float dragMagnitude = DragCoefficient * speed * speed;
-			Vector3 dragDirection = -velocity.Normalized();
-			Vector3 dragAcceleration = dragDirection * dragMagnitude;
-			Vector3 newVelocity = velocity + dragAcceleration * delta;
+			Transform3D pitchedTransform = Transform;
+			pitchedTransform = pitchedTransform.Rotated(Transform.Basis.X, Mathf.DegToRad(90.0f));
+			Vector3 birdForward = -pitchedTransform.Basis.Z;
+			Vector3 birdRight = pitchedTransform.Basis.X;
+			Vector3 birdUp = pitchedTransform.Basis.Y;
 			
-			// Ensure drag doesn't reverse direction
-			if (newVelocity.Dot(velocity) < 0)
-			{
-				velocity = Vector3.Zero;
-			}
-			else
-			{
-				velocity = newVelocity;
-			}
+			float forwardVel = velocity.Dot(birdForward);
+			float rightVel = velocity.Dot(birdRight);
+			float upVel = velocity.Dot(birdUp);
+			
+			float dragMultiplier = _wingsTucked ? 0.1f : 1.0f;
+			float forwardDragRate = DragCoefficient * 0.15f * dragMultiplier;
+			float sideDragRate = DragCoefficient * 2.0f * dragMultiplier;
+			float verticalDragRate = DragCoefficient * 1f * dragMultiplier;
+			
+			float forwardDragAccel = -forwardDragRate * forwardVel * Mathf.Abs(forwardVel);
+			float rightDragAccel = -sideDragRate * rightVel * Mathf.Abs(rightVel);
+			float upDragAccel = -verticalDragRate * upVel * Mathf.Abs(upVel);
+			Vector3 dragAcceleration = (birdForward * forwardDragAccel + 
+										birdRight * rightDragAccel + 
+										birdUp * upDragAccel) * delta;
+			
+			velocity += dragAcceleration;
 		}
 	}
 
 	/// <summary>
-	/// Maintains camera position at fixed distance from bird with safe LookAt to avoid gimbal lock
+	/// Maintains camera position at fixed distance from bird at set height
 	/// </summary>
 	private void UpdateCamera()
 	{
 		if (_camera != null)
 		{
 			Vector3 birdPosition = GlobalPosition;
-			Vector3 cameraToBird = birdPosition - _camera.GlobalPosition;
-			cameraToBird.Y = 0;
 			
-			if (cameraToBird.LengthSquared() < 0.01f)
+			if (_cameraPanAngle == 0.0f)
 			{
-				cameraToBird = new Vector3(0, 0, 10);
+				// Locked camera: Follow behind bird smoothly
+				Vector3 currentCameraOffset = _camera.GlobalPosition - birdPosition;
+				currentCameraOffset.Y = 0; // Keep only horizontal component for following
+				
+				// Use the same forward direction as the physics system for consistency
+				Transform3D pitchedTransform = Transform;
+				pitchedTransform = pitchedTransform.Rotated(Transform.Basis.X, Mathf.DegToRad(90.0f));
+				Vector3 birdForward = -pitchedTransform.Basis.Z;
+				Vector3 horizontalForward = new Vector3(birdForward.X, 0, birdForward.Z);
+				
+				Vector3 idealOffset;
+				if (horizontalForward.LengthSquared() < 0.01f)
+				{
+					// Bird is vertical - maintain current horizontal position
+					idealOffset = currentCameraOffset.Normalized() * CameraDistance;
+				}
+				else
+				{
+					// Bird has horizontal movement - follow behind
+					idealOffset = -horizontalForward.Normalized() * CameraDistance;
+				}
+				
+				// Smooth interpolation towards ideal position (horizontal only)
+				float lerpSpeed = 1.5f;
+				Vector3 targetOffset = currentCameraOffset.Lerp(idealOffset, lerpSpeed * (float)GetPhysicsProcessDeltaTime());
+				targetOffset = targetOffset.Normalized() * CameraDistance;
+				
+				Vector3 targetCameraPos = birdPosition + targetOffset;
+				targetCameraPos.Y = birdPosition.Y + CameraHeight;
+				_camera.GlobalPosition = targetCameraPos;
+			}
+			else
+			{
+				if (_previousCameraPanAngle == 0.0f && _cameraPanAngle != 0.0f)
+				{
+					Vector3 currentOffset = _camera.GlobalPosition - birdPosition;
+					currentOffset.Y = 0;
+					if (currentOffset.LengthSquared() > 0.01f)
+					{
+						float currentAngle = Mathf.Atan2(currentOffset.X, currentOffset.Z) * 180.0f / Mathf.Pi;
+						_baseUnlockedAngle = currentAngle;
+					}
+				}
+				
+				float totalAngle = _cameraPanAngle + _baseUnlockedAngle;
+				Vector3 offsetDirection = new Vector3(
+					Mathf.Sin(Mathf.DegToRad(totalAngle)), 
+					0, 
+					Mathf.Cos(Mathf.DegToRad(totalAngle))
+				);
+				Vector3 targetCameraPos = birdPosition + offsetDirection * CameraDistance;
+				targetCameraPos.Y = birdPosition.Y + CameraHeight;
+				_camera.GlobalPosition = targetCameraPos;
 			}
 			
-			Vector3 normalizedOffset = cameraToBird.Normalized() * 10.0f;
-			Vector3 targetCameraPos = birdPosition - normalizedOffset;
-			targetCameraPos.Y = birdPosition.Y + 4.0f;
+			_previousCameraPanAngle = _cameraPanAngle;
 			
-			_camera.GlobalPosition = targetCameraPos;
-			
-			// Safe LookAt to avoid gimbal lock when looking straight up/down
 			Vector3 lookDirection = (birdPosition - _camera.GlobalPosition).Normalized();
 			Vector3 upVector = Vector3.Up;
 			
@@ -328,22 +520,5 @@ public partial class Bird : CharacterBody3D
 			
 			_camera.LookAt(birdPosition, upVector);
 		}
-	}
-
-	private void ApplyBankedTurnPhysics(ref Vector3 velocity, float delta)
-	{
-		if (_tail == null) return;
-		
-		float tailYawDeflection = Mathf.RadToDeg(_tail.Rotation.Z);
-		float bankingStrength = tailYawDeflection / 45.0f;
-
-		Vector3 birdForward = -Transform.Basis.Z;
-		Vector3 birdRight = Transform.Basis.X;
-		float totalSpeed = velocity.Length();
-
-		float bankingForce = bankingStrength * totalSpeed * 0.5f;
-		Vector3 bankingVelocity = birdRight * bankingForce * delta;
-		
-		velocity += bankingVelocity;
 	}
 }
